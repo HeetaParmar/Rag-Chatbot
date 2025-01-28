@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <title>Chat with Model</title>
+</head>
+<body>
+    <h1>Chat with the Model: {{ model }}</h1>
+    <div style="border: 1px solid #ccc; padding: 10px; margin-bottom: 20px;">
+        <h3>Chat History:</h3>
+        <ul>
+            {% for message in chat_history %}
+                <li><strong>{{ message.role.capitalize() }}:</strong> {{ message.content }}</li>
+            {% endfor %}
+        </ul>
+    </div>
+    <form method="POST" action="/ask_question">
+        <input type="hidden" name="model" value="{{ model }}">
+        <label for="question">Ask a Question:</label>
+        <input type="text" id="question" name="question" required><br><br>
+        <button type="submit">Ask</button>
+    </form>
+    <form method="POST" action="/end_chat">
+        <input type="hidden" name="model" value="{{ model }}">
+        <button type="submit">End Chat</button>
+    </form>
+</body>
+</html>

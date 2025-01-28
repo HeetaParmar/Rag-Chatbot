@@ -1,0 +1,19 @@
+
+[
+        {"company": "dell", "model": "latitude 3420", "location": "C:\\Users\\Heeta Parmar\\OneDrive - Galaxy Office Automation Pvt Ltd\\Desktop\\data\\manuals\\dell_latitude_3420.pdf"},
+    {"company": "dell", "model": "latitude 7350", "location": "C:\\Users\\Heeta Parmar\\OneDrive - Galaxy Office Automation Pvt Ltd\\Desktop\\data\\manuals\\dell_latitutde_7350.pdf"},
+    {"company": "dell", "model": "precision 5690", "location": "C:\\Users\\Heeta Parmar\\OneDrive - Galaxy Office Automation Pvt Ltd\\Desktop\\data\\manuals\\dell_precision_5690.pdf"},
+    {"company": "lenovo", "model": "thinkpad l440", "location": "C:\\Users\\Heeta Parmar\\OneDrive - Galaxy Office Automation Pvt Ltd\\Desktop\\data\\manuals\\lenovo_thinkpad_l440.pdf"},
+    {"company": "lenovo", "model": "thinkpad l540", "location": "C:\\Users\\Heeta Parmar\\OneDrive - Galaxy Office Automation Pvt Ltd\\Desktop\\data\\manuals\\lenovo_thinkbook_14_IIL.pdf"},
+    {"company": "lenovo", "model": "k14 gen1", "location": "C:\\Users\\Heeta Parmar\\OneDrive - Galaxy Office Automation Pvt Ltd\\Desktop\\data\\manuals\\lenovo_k14.pdf"},
+    {"company": "lenovo", "model": "thinkbook 14 2-in-1 gen4", "location": "C:\\Users\\Heeta Parmar\\OneDrive - Galaxy Office Automation Pvt Ltd\\Desktop\\data\\manuals\\lenovo_thinkbook_14_2in1.pdf"},
+    {"company": "lenovo", "model": "l14 gen1", "location": "C:\\Users\\Heeta Parmar\\OneDrive - Galaxy Office Automation Pvt Ltd\\Desktop\\data\\manuals\\lenovo_thinkpad_l14.pdf"},
+    {"company": "lenovo", "model": "l15 gen1", "location": "C:\\Users\\Heeta Parmar\\OneDrive - Galaxy Office Automation Pvt Ltd\\Desktop\\data\\manuals\\lenovo_thinkbook_14_IIL.pdf"},
+    {"company": "lenovo", "model": "v14", "location": "C:\\Users\\Heeta Parmar\\OneDrive - Galaxy Office Automation Pvt Ltd\\Desktop\\data\\manuals\\lenovo_v14.pdf"},
+    {"company": "lenovo", "model": "v15", "location": "C:\\Users\\Heeta Parmar\\OneDrive - Galaxy Office Automation Pvt Ltd\\Desktop\\data\\manuals\\lenovo_v14.pdf"},
+    {"company": "lenovo", "model": "x1 carbon gen9", "location": "C:\\Users\\Heeta Parmar\\OneDrive - Galaxy Office Automation Pvt Ltd\\Desktop\\data\\manuals\\lenovo_x1_yoga.pdf"},
+    {"company": "lenovo", "model": "x1 yoga gen6", "location": "C:\\Users\\Heeta Parmar\\OneDrive - Galaxy Office Automation Pvt Ltd\\Desktop\\data\\manuals\\lenovo_x1_yoga.pdf"},
+    {"company": "lenovo", "model": "yoga duet 7", "location": "C:\\Users\\Heeta Parmar\\OneDrive - Galaxy Office Automation Pvt Ltd\\Desktop\\data\\manuals\\lenovo_yoga_duet_7.pdf"},
+    {"company": "microsoft", "model": "surface 3", "location": "C:\\Users\\Heeta Parmar\\OneDrive - Galaxy Office Automation Pvt Ltd\\Desktop\\data\\manuals\\microsoft_surface_3.pdf"}
+]
+

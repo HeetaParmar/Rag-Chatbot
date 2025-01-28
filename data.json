@@ -1,0 +1,22 @@
+{
+    "name": [
+        "Alice",
+        "xyz",
+        "abc"
+    ],
+    "age": [
+        25,
+        56,
+        78
+    ],
+    "city": [
+        "New York",
+        "Los Angeles",
+        "Chicago"
+    ],
+    "hobbies": [
+        "reading",
+        "traveling",
+        "coding"
+    ]
+}
