@@ -10,7 +10,7 @@ import uuid
 
 # Initialize OpenAI client
 client = openai.OpenAI(
-    api_key="1b71238e-7451-4d2a-b67e-754cba361e1b",
+    api_key="ad957549-232e-487c-b209-2af28bf25365",
     base_url="https://api.sambanova.ai/v1",
 )
 

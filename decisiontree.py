@@ -1,3 +1,5 @@
+from PIL import Image
+import io
 from flask import Flask, request, render_template_string, session, send_file, url_for
 import json
 import os
@@ -8,32 +10,34 @@ import openai
 from gtts import gTTS  # Import gTTS for text-to-speech
 import uuid
 from werkzeug.utils import secure_filename
+import fitz  # PyMuPDF
 
+ 
 # Initialize OpenAI client
 client = openai.OpenAI(
-    api_key="a0ba9114-e359-4611-97b1-e375bd5b7f31",
+    api_key="4631532b-ba03-441e-bb60-4c7086a5f228",
     base_url="https://api.sambanova.ai/v1",
 )
-
+ 
 # Load user data from JSON files
 def load_json(file_path):
     with open(file_path, "r") as file:
         return json.load(file)
-
+ 
 user_data = load_json("user_data.json")
 manuals_data = load_json("manual_data.json")
-
+ 
 app = Flask(__name__)
 app.secret_key = "supersecretkey"  # Replace with a secure key in production
-
+ 
 # Initialize Sentence-Transformers model for embeddings
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 context_encoder = SentenceTransformer("sentence-transformers/all-MiniLM-L12-v2").to(device)
-
+ 
 # Globals for storing embeddings and chunks
 stored_embeddings = []
 stored_chunks = []
-stored_metadata=[]
+ 
 # HTML Templates
 login_page = """
 <!doctype html>
@@ -102,7 +106,7 @@ model_page = """
 </body>
 </html>
 """
-
+ 
 company_page = """
 <!doctype html>
 <html lang="en">
@@ -141,7 +145,7 @@ company_page = """
 </body>
 </html>
 """
-
+ 
 model_list_page = """
 <!doctype html>
 <html lang="en">
@@ -181,8 +185,8 @@ model_list_page = """
 </body>
 </html>
 """
-
-
+ 
+ 
 # HTML Templates
 chatbot_page = """
 <!doctype html>
@@ -196,16 +200,16 @@ chatbot_page = """
             const recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
             recognition.lang = 'en-US';
             recognition.interimResults = false;
-
+ 
             recognition.onresult = function(event) {
                 const transcript = event.results[0][0].transcript;
                 document.getElementById('question').value = transcript;
             };
-
+ 
             recognition.onerror = function(event) {
                 alert('Speech recognition error: ' + event.error);
             };
-
+ 
             recognition.start();
         }
     </script>
@@ -217,24 +221,20 @@ chatbot_page = """
             justify-content: center;
             align-items: center;
         }
-        .chat-message {
-            white-space: pre-wrap;
-        }
     </style>
 </head>
 <body class="bg-light">
     <div class="container">
         <h1 class="text-center my-5">Chat with Model</h1>
-        
+       
         <!-- Chat History -->
         <div class="border p-4 bg-white shadow-sm rounded mb-4">
             <h3>Chat History:</h3>
             <ul class="list-group">
                 {% for message in chat_history %}
                     <li class="list-group-item">
-                        <strong>{{ message.role.capitalize() }}:</strong> 
-                        <p class="chat-message">{{ message.content|safe }}</p>
-                        {% if message.audio_file %}
+                        <strong>{{ message.role.capitalize() }}:</strong> {{ message.content }}
+                        {% if message.role == 'assistant' and message.audio_file %}
                             <br>
                             <audio controls class="mt-2">
                                 <source src="{{ message.audio_file }}" type="audio/mpeg">
@@ -245,9 +245,9 @@ chatbot_page = """
                 {% endfor %}
             </ul>
         </div>
-
+ 
         <!-- Form to Ask a New Question -->
-        <form method="POST" action="/ask_question" class="d-flex flex-column align-items-center mb-3" enctype="multipart/form-data">
+        <form method="POST" action="/ask_question" class="d-flex flex-column align-items-center mb-3">
             <input type="hidden" name="model" value="{{ model }}">
             <div class="mb-3 w-100">
                 <label for="question" class="form-label">Ask a Question:</label>
@@ -258,23 +258,7 @@ chatbot_page = """
             </div>
             <button type="submit" class="btn btn-primary w-100">Submit</button>
         </form>
-
-        <!-- Confirmation Buttons (Yes/No) -->
-        {% if chat_history and chat_history[-1].role == 'assistant' and 'Have you completed this step?' in chat_history[-1].content %}
-            <div class="d-flex justify-content-center gap-2 mb-3">
-                <form method="POST" action="/ask_question" class="d-inline">
-                    <input type="hidden" name="model" value="{{ model }}">
-                    <input type="hidden" name="user_response" value="yes">
-                    <button type="submit" class="btn btn-success">Yes</button>
-                </form>
-                <form method="POST" action="/ask_question" class="d-inline">
-                    <input type="hidden" name="model" value="{{ model }}">
-                    <input type="hidden" name="user_response" value="no">
-                    <button type="submit" class="btn btn-danger">No</button>
-                </form>
-            </div>
-        {% endif %}
-
+ 
         <!-- Clear and End Chat Buttons -->
         <div class="d-flex justify-content-between">
             <a href="/" class="btn btn-secondary">Back</a>
@@ -291,17 +275,17 @@ chatbot_page = """
 </body>
 </html>
 """
-
+ 
+ 
 @app.route("/", methods=["GET"])
 def home():
     return render_template_string(login_page)
-
 @app.route("/login", methods=["POST"])
 def login():
     username = request.form["username"]
     password = request.form["password"]
     user = next((user for user in user_data if str(user["user_id"]) == username), None)
-
+ 
     if user:
         if "password" in user and user["password"] == password:
             return render_template_string(model_page, username=username, model=user["model"], back_url="/")
@@ -311,26 +295,25 @@ def login():
             return "<h1>Invalid password</h1>", 401
     else:
         return "<h1>Invalid login ID</h1>", 401
-
+ 
 @app.route("/validate_model", methods=["POST"])
 def validate_model():
     username = request.form["username"]
     response = request.form["response"]
     model = request.form["model"]
-
+ 
     if response == "yes":
         user = next((user for user in user_data if str(user["user_id"]) == username), None)
         if user:
             pdf_path = user.get("location")
             if pdf_path and os.path.exists(pdf_path):
-                chunks, metadata = get_chunks(pdf_path)  # Fetch chunks and metadata
+                chunks = get_chunks(pdf_path)
                 embeddings = convert_chunks_to_embeddings(chunks)
-
-                global stored_embeddings, stored_chunks, stored_metadata
+ 
+                global stored_embeddings, stored_chunks
                 stored_embeddings = embeddings
                 stored_chunks = chunks
-                stored_metadata = metadata  # Store metadata globally
-
+ 
                 return render_template_string(chatbot_page, model=model, chat_history=[], back_url="/validate_model")
             else:
                 return f"<h1>Error:</h1><p>PDF for the model {model} not found or does not exist at '{pdf_path}'.</p>", 404
@@ -343,309 +326,187 @@ def select_model():
     username = request.form["username"]
     company = request.form.get("company")
     model = request.form.get("model", None)
-
+ 
     if not model:
         models = [manual["model"] for manual in manuals_data if manual["company"] == company]
         return render_template_string(model_list_page, username=username, company=company, models=models, back_url="/company_page")
-
+ 
     selected_manual = next((manual for manual in manuals_data if manual["model"] == model), None)
     if not selected_manual:
         return f"<h1>Error: Model '{model}' not found.</h1>", 404
-
+ 
     pdf_path = selected_manual.get("location")
     if not pdf_path or not os.path.exists(pdf_path):
         return f"<h1>Error: PDF for the model '{model}' not found at '{pdf_path}'.</h1>", 404
-
-    chunks, metadata = get_chunks(pdf_path)
+ 
+    chunks = get_chunks(pdf_path)
     embeddings = convert_chunks_to_embeddings(chunks)
-
-    global stored_embeddings, stored_chunks, stored_metadata
+ 
+    global stored_embeddings, stored_chunks
     stored_embeddings = embeddings
     stored_chunks = chunks
-    stored_metadata = metadata
-
+ 
     return render_template_string(chatbot_page, model=model, chat_history=[], back_url="/company_page")
-
-@app.route("/ask_question", methods=["POST"])
-# def ask_question():
-#     global stored_embeddings, stored_chunks, stored_metadata
-#     model = request.form["model"]
-#     question = request.form.get("question")
-#     audio = request.files.get("audio")
-
-#     if not stored_embeddings or not stored_chunks:
-#         return "<h1>Error: No embeddings available. Please select a document first.</h1>", 400
-
-#     if "chat_history" not in session or not session["chat_history"]:
-#         session["chat_history"] = [{"role": "system", "content": "How may I help you?"}]
-
-#     if audio:
-#         filename = secure_filename(audio.filename)
-#         audio_path = os.path.join("static", filename)
-#         audio.save(audio_path)
-#         question = transcribe_audio(audio_path)
-
-#     if not question:
-#         return "<h1>Error: No valid input provided (text or audio).</h1>", 400
-
-#     # Process the query
-#     question_embedding = context_encoder.encode(question, convert_to_tensor=True, device=device).cpu().numpy()
-
-#     # Ensure shapes match
-#     assert len(stored_embeddings) > 0, "No stored embeddings available!"
-#     assert question_embedding.shape == stored_embeddings[0].shape, "Embedding shapes do not match!"
-
-#     # Compute cosine similarities
-#     similarities = [
-#         torch.nn.functional.cosine_similarity(
-#             torch.tensor(question_embedding),
-#             torch.tensor(chunk_embedding),
-#             dim=0
-#         ).item()
-#         for chunk_embedding in stored_embeddings
-#     ]
-
-#     if not similarities:
-#         return "<h1>Error: Unable to calculate similarities. Check your embeddings or query.</h1>", 400
-
-#     most_relevant_index = similarities.index(max(similarities))
-#     most_relevant_chunk = stored_chunks[most_relevant_index]
-#     metadata = stored_metadata[most_relevant_index]
-
-#     # Generate the styled page information
-#     page_info = f"<span style='color:blue;'>Found in section '{metadata['title']}' (Pages {metadata['start_page']}-{metadata['end_page']}).</span>"
-
-#     conversation_history = session["chat_history"]
-#     conversation_history.append({"role": "user", "content": question})
-
-#     # Generate response using OpenAI API
-#     response = client.chat.completions.create(
-#         model="Meta-Llama-3.1-8B-Instruct",
-#         messages=conversation_history + [{"role": "assistant", "content": most_relevant_chunk}],
-#         temperature=0.4,
-#         top_p=0.1,
-#     )
-
-#     answer = response.choices[0].message.content
-#     import re
-#     url_pattern = r"(https?://[^\s]+)"
-#     answer_with_links = re.sub(url_pattern, r'<a href="\1" target="_blank">\1</a>', answer)
-
-#     conversation_history.append({
-#         "role": "assistant",
-#         "content": f"{answer_with_links}<br>{page_info}"  # Include styled page info
-#     })
-
-
-#     # Generate audio for the response
-#     audio_filename = f"response_{uuid.uuid4().hex}.mp3"
-#     tts = gTTS(text=answer, lang="en")
-#     audio_filepath = os.path.join("static", audio_filename)
-#     tts.save(audio_filepath)
-
-#     # Add the audio file path to the assistant's response in the chat history
-#     conversation_history[-1]["audio_file"] = audio_filepath
-
-#     # Save the updated chat history in the session
-#     session["chat_history"] = conversation_history
-
-#     # Render the chatbot page with the audio playback option
-#     return render_template_string(chatbot_page, model=model, chat_history=conversation_history, back_url="/")
-@app.route("/ask_question", methods=["POST"])
+ 
+ 
 @app.route("/ask_question", methods=["POST"])
 def ask_question():
     global stored_embeddings, stored_chunks
     model = request.form["model"]
-    user_query = request.form.get("question", "").lower()
-    user_response = request.form.get("user_response")  # User's confirmation ('yes' or 'no')
-    current_problem = session.get("current_problem")  # Track the current problem
-    current_step = session.get("current_step", 0)  # Track the current step
+    question = request.form.get("question")
 
-    # Decision tree for specific problems
-    decision_trees = {
-        "display not working": [
-            "Step 1: Check if the display is powered on. Ensure the power cable is connected properly.",
-            "Step 2: Verify that the display is receiving input from the correct source (e.g., HDMI, VGA).",
-            "Step 3: Check for any loose cables between the display and the computer.",
-            "Step 4: Restart the display and the connected computer.",
-            "Step 5: Test the display with another device to rule out hardware issues.",
-            "Step 6: Contact technical support for further assistance.",
-        ],
-        "printer not working": [
-            "Step 1: Ensure the printer is powered on and connected to the network.",
-            "Step 2: Check for any paper jams in the printer.",
-            "Step 3: Verify that the printer has sufficient ink or toner.",
-            "Step 4: Restart the printer and your computer.",
-            "Step 5: Reinstall or update the printer drivers.",
-            "Step 6: Contact technical support for further assistance.",
-        ],
-        "internet not working": [
-            "Step 1: Check if your device is connected to the Wi-Fi network.",
-            "Step 2: Restart your router and modem.",
-            "Step 3: Run a speed test to check for connectivity issues.",
-            "Step 4: Verify if other devices on the network are facing the same issue.",
-            "Step 5: Contact your Internet Service Provider for assistance.",
-        ],
-    }
+    if not question:
+        return "<h1>Error: Please enter a question.</h1>", 400
 
-    # Initialize chat history if not present
-    if "chat_history" not in session:
-        session["chat_history"] = [{"role": "system", "content": "How may I help you?"}]
-        session["current_problem"] = None  # Start without a specific problem
-        session["current_step"] = 0
+    # Convert question to embedding
+    question_embedding = context_encoder.encode(question, convert_to_tensor=True, device=device).cpu().numpy()
 
-    chat_history = session["chat_history"]
+    # Compute cosine similarity with stored embeddings
+    similarities = [
+        torch.nn.functional.cosine_similarity(
+            torch.tensor(question_embedding),
+            torch.tensor(entry["embedding"]),
+            dim=0
+        ).item()
+        for entry in stored_embeddings
+    ]
 
-    # Check if the user query matches any specific problem
-    matched_problem = None
-    for problem, steps in decision_trees.items():
-        if problem in user_query:
-            matched_problem = problem
-            break
+    if not similarities:
+        return "<h1>Error: No relevant results found.</h1>", 400
 
-    if matched_problem:
-        # Use the decision tree logic for specific problems
-        if current_problem is None:
-            session["current_problem"] = matched_problem
-            current_problem = matched_problem
+    # Get the most relevant chunk
+    most_relevant_index = similarities.index(max(similarities))
+    most_relevant_chunk = stored_chunks[most_relevant_index]
 
-        steps = decision_trees[current_problem]
+    # Get relevant images
+    relevant_images = stored_embeddings[most_relevant_index]["images"]
+    image_tags = "".join(f'<img src="{img}" style="max-width:100%;" class="img-thumbnail">' for img in relevant_images)
 
-        # Handle user response to the current step
-        if user_response:
-            if user_response == "yes":
-                if current_step + 1 < len(steps):
-                    current_step += 1  # Move to the next step
-                else:
-                    chat_history.append({
-                        "role": "assistant",
-                        "content": "All steps have been completed. If the problem persists, please contact technical support."
-                    })
-                    session["chat_history"] = chat_history
-                    return render_template_string(chatbot_page, model=model, chat_history=chat_history, back_url="/")
-            elif user_response == "no":
-                # Reiterate the current step
-                chat_history.append({
-                    "role": "assistant",
-                    "content": f"Please perform this step: {steps[current_step]}"
-                })
-                session["chat_history"] = chat_history
-                return render_template_string(chatbot_page, model=model, chat_history=chat_history, back_url="/")
+    # Generate OpenAI response
+    conversation_history = session.get("chat_history", [{"role": "system", "content": "How may I help you?"}])
+    conversation_history.append({"role": "user", "content": question})
 
-        # Provide the next step
-        if current_step < len(steps):
-            step = steps[current_step]
-            chat_history.append({"role": "assistant", "content": step})
-            chat_history.append({
-                "role": "assistant",
-                "content": "Have you completed this step? (Yes/No)"
-            })
-            session["current_step"] = current_step  # Save the current step
-        else:
-            chat_history.append({
-                "role": "assistant",
-                "content": "Troubleshooting complete. If the issue persists, contact support."
-            })
+    response = client.chat.completions.create(
+        model="Meta-Llama-3.1-8B-Instruct",
+        messages=conversation_history + [{"role": "assistant", "content": most_relevant_chunk["text"]}],
+        temperature=0.4,
+        top_p=0.1,
+    )
 
-        # Save updated chat history in the session
-        session["chat_history"] = chat_history
+    answer = response.choices[0].message.content
 
-        return render_template_string(chatbot_page, model=model, chat_history=chat_history, back_url="/")
+    # Convert response to speech
+    tts = gTTS(text=answer, lang="en")
+    audio_filename = f"static/audio/{uuid.uuid4()}.mp3"
+    os.makedirs("static/audio", exist_ok=True)  # Ensure directory exists
+    tts.save(audio_filename)
 
-    else:
-        # For all other queries, fetch information from the PDF
-        if not stored_embeddings or not stored_chunks:
-            chat_history.append({
-                "role": "assistant",
-                "content": "I'm sorry, I couldn't identify your problem. Please select a document to fetch relevant information."
-            })
-            session["chat_history"] = chat_history
-            return render_template_string(chatbot_page, model=model, chat_history=chat_history, back_url="/")
+    # Append response, images, and audio to chat history
+    conversation_history.append({
+        "role": "assistant",
+        "content": f"{answer}<br><strong>Page: {most_relevant_chunk['page']}</strong><br>{image_tags}",
+        "audio_file": audio_filename
+    })
+    session["chat_history"] = conversation_history
 
-        # Search the PDF for relevant content
-        query_embedding = context_encoder.encode(user_query, convert_to_tensor=True, device=device).cpu().numpy()
-        similarities = [
-            torch.nn.functional.cosine_similarity(
-                torch.tensor(query_embedding),
-                torch.tensor(chunk_embedding),
-                dim=0
-            ).item()
-            for chunk_embedding in stored_embeddings
-        ]
-
-        if similarities:
-            most_relevant_index = similarities.index(max(similarities))
-            most_relevant_chunk = stored_chunks[most_relevant_index]
-
-            # Add the relevant chunk to the chat history
-            chat_history.append({"role": "assistant", "content": most_relevant_chunk})
-            session["chat_history"] = chat_history
-            return render_template_string(chatbot_page, model=model, chat_history=chat_history, back_url="/")
-
-        # If no relevant information is found
-        chat_history.append({
-            "role": "assistant",
-            "content": "I couldn't find relevant information in the document. Please try a different query."
-        })
-        session["chat_history"] = chat_history
-        return render_template_string(chatbot_page, model=model, chat_history=chat_history, back_url="/")
-
+    # Render chatbot page with audio support
+    return render_template_string(chatbot_page, model=model, chat_history=conversation_history, back_url="/")
+ 
 @app.route("/clear_chat", methods=["POST"])
 def clear_chat():
     session.pop("chat_history", None)
     return render_template_string(chatbot_page, model="Sample Model", chat_history=[], back_url="/select_model")
-
+ 
 @app.route("/end_chat", methods=["POST"])
 def end_chat():
     session.pop("chat_history", None)
-
-    global stored_embeddings, stored_chunks, stored_metadata
+ 
+    global stored_embeddings, stored_chunks
     stored_embeddings = []
     stored_chunks = []
-    stored_metadata = []
-
+ 
     return "<h1>Chat ended. </h1>", 200
+def extract_section(pdf_document, start_page, end_page, title, output_dir="static/pdf_images"):
+    """Extracts text and images from a PDF section."""
+    section_text = f"Section Title: {title}\n\n"
+    images = []
+ 
+    os.makedirs(output_dir, exist_ok=True)
+ 
+    for page_num in range(start_page - 1, end_page):
+        page = pdf_document.load_page(page_num)
+        section_text += page.get_text("text") + "\n"
+ 
+        # Extract images
+        for img_index, img in enumerate(page.get_images(full=True)):
+            xref = img[0]
+            base_image = pdf_document.extract_image(xref)
+            image_bytes = base_image["image"]
+            img_ext = base_image["ext"]
+            image = Image.open(io.BytesIO(image_bytes))
+ 
+            # Save image
+            img_filename = f"page_{page_num+1}_img_{img_index}.{img_ext}"
+            img_path = os.path.join(output_dir, img_filename)
+            image.save(img_path)
+ 
+            # Store image reference
+            images.append(img_path)
+ 
+    return {"text": section_text, "images": images}
+ 
 
 def get_chunks(pdf_path):
     pdf_document = fitz.open(pdf_path)
-    toc = pdf_document.get_toc()
     sections_list = []
-    metadata = []  # To store page ranges and titles
-
-    if toc:
-        for i in range(len(toc)):
-            title = toc[i][1]
-            start_page = toc[i][2]
-            end_page = toc[i + 1][2] - 1 if i + 1 < len(toc) else pdf_document.page_count
-            section_text = extract_section(pdf_document, start_page, end_page, title)
-            if section_text:
-                sections_list.append(section_text)
-                metadata.append({"title": title, "start_page": start_page, "end_page": end_page})
-    else:
-        for page_num in range(pdf_document.page_count):
-            page = pdf_document.load_page(page_num)
-            page_text = page.get_text("text")
-            sections_list.append(page_text)
-            metadata.append({"title": f"Page {page_num + 1}", "start_page": page_num + 1, "end_page": page_num + 1})
-
+    image_dir = "static/images"  # Store extracted images
+    os.makedirs(image_dir, exist_ok=True)
+ 
+    for page_num in range(pdf_document.page_count):
+        page = pdf_document[page_num]
+        text = page.get_text("text")
+ 
+        # Extract images
+        image_paths = []
+        for img_index, img in enumerate(page.get_images(full=True)):
+            xref = img[0]  # Reference ID of image
+            pix = fitz.Pixmap(pdf_document, xref)
+ 
+            # If the image is not in RGB, convert it to RGB
+            if pix.n < 4:  # If the image is grayscale or RGB
+                rgb_pix = fitz.Pixmap(fitz.csRGB, pix)  # Convert to RGB
+            else:
+                # If the image is CMYK, convert to RGB
+                rgb_pix = fitz.Pixmap(fitz.csRGB, pix)
+                pix = None  # Free original Pixmap memory
+ 
+            # Save the image as PNG
+            img_filename = f"page_{page_num+1}_img_{img_index+1}.png"
+            img_filepath = os.path.join(image_dir, img_filename)
+            rgb_pix.save(img_filepath)  # Save the image in RGB format
+            rgb_pix = None  # Free memory for Pixmap
+ 
+            image_paths.append(img_filepath)
+ 
+        # Combine text and image references
+        chunk_data = {
+            "text": text.strip(),
+            "images": image_paths,
+            "page": page_num + 1
+        }
+        sections_list.append(chunk_data)
+ 
     pdf_document.close()
-    return sections_list, metadata
-
-def extract_section(pdf_document, start_page, end_page, title):
-    section_text = f"Section Title: {title}\n\n"
-    for page_num in range(start_page - 1, end_page):
-        page = pdf_document.load_page(page_num)
-        section_text += page.get_text("text")
-    return section_text
-
+    return sections_list
 def convert_chunks_to_embeddings(chunks):
     embeddings = []
     for chunk in chunks:
-        embedding = context_encoder.encode(chunk, convert_to_tensor=True, device=device)
-        embeddings.append(embedding.cpu().numpy())
+        embedding = context_encoder.encode(chunk["text"], convert_to_tensor=True, device=device)
+        embeddings.append({"embedding": embedding.cpu().numpy(), "images": chunk["images"], "page": chunk["page"]})
     return embeddings
-
+ 
+ 
 if __name__ == "__main__":
     app.run(debug=True)
-
-
+ 
+ 

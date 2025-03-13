@@ -1,0 +1,36 @@
+{
+  "decision_trees": {
+    "display issue": {
+      "steps": [
+        "Step 1: Check if the display is powered on.",
+        "Step 2: Verify the input source.",
+        "Step 3: Check for loose cables.",
+        "Step 4: Restart the display and computer.",
+        "Step 5: Test with another device.",
+        "Step 6: Contact support."
+      ],
+      "tags": ["screen", "display", "monitor", "visual", "power"]
+    },
+    "printer issue": {
+      "steps": [
+        "Step 1: Ensure the printer is on.",
+        "Step 2: Check for paper jams.",
+        "Step 3: Verify ink/toner levels.",
+        "Step 4: Restart printer and computer.",
+        "Step 5: Update printer drivers.",
+        "Step 6: Contact support."
+      ],
+      "tags": ["printer", "paper", "toner", "ink", "hardware"]
+    },
+    "internet issue": {
+      "steps": [
+        "Step 1: Check Wi-Fi connection.",
+        "Step 2: Restart router and modem.",
+        "Step 3: Run a speed test.",
+        "Step 4: Check other devices.",
+        "Step 5: Contact ISP."
+      ],
+      "tags": ["internet", "Wi-Fi", "router", "connection", "speed"]
+    }
+  }
+}

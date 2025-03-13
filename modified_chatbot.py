@@ -11,7 +11,7 @@ from werkzeug.utils import secure_filename
 
 # Initialize OpenAI client
 client = openai.OpenAI(
-    api_key="fb94d7e9-2867-4803-b363-4bf302fe032a",
+    api_key="545b949f-3063-46a0-9a26-9398ab88f407",
     base_url="https://api.sambanova.ai/v1",
 )
 
@@ -485,3 +485,6 @@ def convert_chunks_to_embeddings(chunks):
 
 if __name__ == "__main__":
     app.run(debug=True)
+
+
+
