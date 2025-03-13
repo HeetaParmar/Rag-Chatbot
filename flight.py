@@ -1,6 +1,6 @@
 from PIL import Image
 import io
-from flask import Flask, request, render_template_string, session, url_for
+from flask import Flask, request, render_template_string, session, url_for, send_from_directory, send_file
 import json
 import os
 import fitz  # PyMuPDF for extracting text from PDFs
@@ -14,7 +14,7 @@ import numpy as np  # for cosine similarity calculations
  
 # Initialize OpenAI client
 client = openai.OpenAI(
-    api_key="fb38d9de-1872-4d65-8f32-bf1c2815f481",
+    api_key="2310ac5d-0f73-4359-a2dc-6ae2101eeb8d",
     base_url="https://api.sambanova.ai/v1",
 )
  
@@ -29,6 +29,12 @@ manuals_data = load_json("manual_data.json")
 app = Flask(__name__)
 app.secret_key = "supersecretkey"  # Replace with a secure key in production
  
+# Ensure static directories exist
+if not os.path.exists("static/audio"):
+    os.makedirs("static/audio")
+if not os.path.exists("static/images"):
+    os.makedirs("static/images")
+ 
 # Initialize Sentence-Transformers model for embeddings
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 context_encoder = SentenceTransformer("sentence-transformers/all-MiniLM-L12-v2").to(device)
@@ -37,10 +43,6 @@ context_encoder = SentenceTransformer("sentence-transformers/all-MiniLM-L12-v2")
 stored_embeddings = []
 stored_chunks = []
  
- 
-# Ensure 'static' directory exists for storing audio files
-if not os.path.exists("static/audio"):
-    os.makedirs("static/audio")
  
 # Load Sentence-Transformers model
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -154,9 +156,20 @@ chatbot_page = get_template("Chat with Model", """
             {% for message in chat_history|reverse %}
                 <li class="list-group-item chat-message">
                     <strong>{{ message.role.capitalize() }}:</strong> {{ message.content }}
+                    {% if message.images and message.images|length > 0 %}
+                        <div class="images-container mt-2">
+                            {% for image_path in message.images %}
+                                <div class="image-item mb-2">
+                                    <p>Image: {{ image_path }}</p>
+                                    <img src="{{ url_for('static', filename=image_path) }}" 
+                                         alt="Image from PDF" class="img-fluid" style="max-width: 100%; max-height: 300px;">
+                                </div>
+                            {% endfor %}
+                        </div>
+                    {% endif %}
                     {% if message.audio %}
                         <div class="audio-controls mt-2">
-                            <audio id="audio-{{ loop.index }}" src="{{ url_for('serve_audio', filename=message.audio) }}"></audio>
+                            <audio id="audio-{{ loop.index }}" src="{{ url_for('static', filename='audio/' + message.audio) }}"></audio>
                             <button onclick="togglePlay('audio-{{ loop.index }}')" class="btn btn-sm btn-primary">Play/Pause</button>
                             <select onchange="changeSpeed('audio-{{ loop.index }}', this.value)" class="form-select-sm d-inline-block w-auto">
                                 <option value="0.5">0.5x</option>
@@ -192,6 +205,35 @@ chatbot_page = get_template("Chat with Model", """
         function changeSpeed(audioId, speed) {
             const audio = document.getElementById(audioId);
             audio.playbackRate = parseFloat(speed);
+        }
+        
+        function startRecognition() {
+            if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+                const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+                const recognition = new SpeechRecognition();
+                
+                recognition.lang = 'en-US';
+                recognition.interimResults = false;
+                recognition.maxAlternatives = 1;
+                
+                recognition.start();
+                
+                recognition.onresult = function(event) {
+                    const speechResult = event.results[0][0].transcript;
+                    document.getElementById('question').value = speechResult;
+                };
+                
+                recognition.onerror = function(event) {
+                    console.error('Speech recognition error:', event.error);
+                    alert('Speech recognition error: ' + event.error);
+                };
+                
+                recognition.onend = function() {
+                    console.log('Speech recognition ended');
+                };
+            } else {
+                alert('Speech recognition is not supported in your browser. Please use Chrome or Edge.');
+            }
         }
     </script>
     <form method="POST" action="/ask_question" class="d-flex flex-column align-items-center mb-3">
@@ -410,12 +452,32 @@ def ask_question():
                 most_relevant_index = similarities.index(max(similarities))
                 most_relevant_chunk = stored_chunks[most_relevant_index]
                 answer_text = format_response_as_steps(most_relevant_chunk["text"])
+                
+                # Get images from the most relevant chunk
                 answer_images = most_relevant_chunk.get("images", [])
+                
+                # Debug image paths
+                print(f"Images found in chunk: {answer_images}")
+                
+                # If there are no images in the most relevant chunk, check other chunks with high similarity
+                if not answer_images and len(similarities) > 1:
+                    # Get top 3 most similar chunks
+                    top_indices = sorted(range(len(similarities)), key=lambda i: similarities[i], reverse=True)[:3]
+                    for idx in top_indices:
+                        if idx != most_relevant_index:  # Skip the most relevant chunk we already checked
+                            chunk_images = stored_chunks[idx].get("images", [])
+                            if chunk_images:
+                                answer_images = chunk_images
+                                print(f"Using images from another chunk: {answer_images}")
+                                break
             
             answer_audio = generate_audio(answer_text)
 
-    chat_history = session["chat_history"]
-    chat_history.append({"role": "system", "content": system_message})
+    # Add user's question to chat history
+    chat_history = session.get("chat_history", [])
+    chat_history.append({"role": "user", "content": question})
+    
+    # Add system's response to chat history
     chat_history.append({"role": "assistant", "content": answer_text, "audio": answer_audio, "images": answer_images})
     session["chat_history"] = chat_history
     
@@ -440,9 +502,14 @@ def step_response():
         message = ("Please perform the following step before proceeding:\n" +
                    dt["steps"][current] +
                    "\nOnce completed, please click Yes.")
+    
+    # Generate audio for the response
+    audio_filename = generate_audio(message)
+    
     conversation_history = session.get("chat_history", [{"role": "system", "content": "How may I help you?"}])
-    conversation_history.append({"role": "assistant", "content": message})
+    conversation_history.append({"role": "assistant", "content": message, "audio": audio_filename, "images": []})
     session["chat_history"] = conversation_history
+    
     return render_template_string(chatbot_page, model=request.form.get("model"), chat_history=conversation_history, back_url="/", decision_tree=dt)
 @app.route("/view_pdf", methods=["GET"])
 def view_pdf():
@@ -509,7 +576,18 @@ def extract_pdf_images(pdf_path, output_dir="static/images"):
     return images
 
 def get_chunks(pdf_path):
-    pdf_document = fitz.open(pdf_path)
+    try:
+        # Try the standard way first
+        pdf_document = fitz.open(pdf_path)
+    except AttributeError:
+        # If that fails, try the alternative import method
+        import pymupdf
+        pdf_document = pymupdf.open(pdf_path)
+    except Exception as e:
+        # If both fail, try a different approach with PyMuPDF
+        from pymupdf import Document
+        pdf_document = Document(pdf_path)
+    
     sections_list = []
     image_dir = "static/images"
     os.makedirs(image_dir, exist_ok=True)
@@ -522,17 +600,27 @@ def get_chunks(pdf_path):
         
         for img_index, img in enumerate(page.get_images(full=True)):
             xref = img[0]
-            pix = fitz.Pixmap(pdf_document, xref)
-            if pix.n < 4:
-                rgb_pix = fitz.Pixmap(fitz.csRGB, pix)
-            else:
-                rgb_pix = fitz.Pixmap(fitz.csRGB, pix)
-                pix = None
-            img_filename = f"page_{page_num+1}_img_{img_index+1}.png"
-            img_filepath = os.path.join(image_dir, img_filename)
-            rgb_pix.save(img_filepath)
-            rgb_pix = None
-            image_paths.append(img_filepath)
+            try:
+                base_image = pdf_document.extract_image(xref)
+                image_bytes = base_image["image"]
+                img_ext = base_image["ext"]
+                
+                # Create a unique filename for the image
+                img_filename = f"page_{page_num+1}_img_{img_index+1}.{img_ext}"
+                img_filepath = os.path.join(image_dir, img_filename)
+                
+                # Save the image to disk
+                with open(img_filepath, "wb") as img_file:
+                    img_file.write(image_bytes)
+                
+                # Store the relative path to be used in the template
+                # Use only the path relative to the static directory with forward slashes
+                relative_path = "images/" + img_filename
+                image_paths.append(relative_path)
+                print(f"Extracted image: {img_filepath} -> URL path: {relative_path}")
+            except Exception as e:
+                print(f"Error extracting image: {e}")
+                continue
         
         chunk_data = {
             "text": text.strip(),
@@ -601,9 +689,152 @@ def convert_chunks_to_embeddings(chunks):
     embeddings = []
     for chunk in chunks:
         embedding = context_encoder.encode(chunk["text"], convert_to_tensor=True, device=device)
-        embeddings.append({"embedding": embedding.cpu().numpy(), "images": chunk["images"], "page": chunk["page"]})
+        
+        # Ensure image paths are using forward slashes
+        image_paths = []
+        if "images" in chunk and chunk["images"]:
+            for img_path in chunk["images"]:
+                # Convert backslashes to forward slashes if present
+                img_path = img_path.replace("\\", "/")
+                image_paths.append(img_path)
+        
+        embeddings.append({
+            "embedding": embedding.cpu().numpy(), 
+            "images": image_paths, 
+            "page": chunk.get("page", "Unknown")
+        })
     return embeddings
- 
+
+@app.route("/debug_images")
+def debug_images():
+    """Debug route to check image paths and display."""
+    image_dir = "static/images"
+    if not os.path.exists(image_dir):
+        return f"Image directory {image_dir} does not exist", 404
+    
+    images = os.listdir(image_dir)
+    if not images:
+        return f"No images found in {image_dir}", 404
+    
+    html = "<h1>Debug Images</h1>"
+    html += f"<p>Found {len(images)} images in {image_dir}</p>"
+    html += "<div>"
+    
+    for img in images[:10]:  # Show first 10 images
+        img_path = "images/" + img
+        img_url = url_for("static", filename=img_path)
+        
+        html += f'<div style="margin: 20px; padding: 10px; border: 1px solid #ccc;">'
+        html += f'<p>File: {img}</p>'
+        html += f'<p>Path: {img_path}</p>'
+        html += f'<p>URL: {img_url}</p>'
+        html += f'<img src="{img_url}" style="max-width: 300px; border: 1px solid #ccc;">'
+        html += '</div>'
+    
+    html += "</div>"
+    
+    return html
+
+@app.route("/debug_chunks")
+def debug_chunks():
+    """Debug route to check stored chunks and their image paths."""
+    global stored_chunks
+    
+    if not stored_chunks:
+        return "No chunks stored. Please select a document first.", 400
+    
+    html = "<h1>Debug Chunks</h1>"
+    html += f"<p>Total chunks: {len(stored_chunks)}</p>"
+    
+    # Count chunks with images
+    chunks_with_images = sum(1 for chunk in stored_chunks if chunk.get("images") and len(chunk["images"]) > 0)
+    html += f"<p>Chunks with images: {chunks_with_images}</p>"
+    
+    # Display first 5 chunks with images
+    count = 0
+    for i, chunk in enumerate(stored_chunks):
+        if "images" in chunk and chunk["images"]:
+            count += 1
+            html += f'<div style="margin: 20px; padding: 10px; border: 1px solid #ccc;">'
+            html += f'<h3>Chunk {i} (Page {chunk.get("page", "Unknown")})</h3>'
+            html += f'<p><strong>Text:</strong> {chunk["text"][:200]}...</p>'
+            html += f'<p><strong>Images ({len(chunk["images"])}):</strong></p>'
+            html += '<div style="display: flex; flex-wrap: wrap;">'
+            
+            for img_path in chunk["images"]:
+                img_url = url_for("static", filename=img_path)
+                html += f'<div style="margin: 10px; padding: 10px; border: 1px solid #ddd;">'
+                html += f'<p>Path: {img_path}</p>'
+                html += f'<p>URL: {img_url}</p>'
+                html += f'<img src="{img_url}" style="max-width: 200px; border: 1px solid #ccc;">'
+                html += '</div>'
+            
+            html += '</div></div>'
+            
+            if count >= 5:
+                break
+    
+    if count == 0:
+        html += "<p>No chunks with images found.</p>"
+    
+    return html
+
+# Add a new route to directly view a specific image
+@app.route("/view_image/<path:image_path>")
+def view_image(image_path):
+    """Route to directly view a specific image."""
+    return send_from_directory("static", image_path)
+
+@app.route("/test_image")
+def test_image():
+    """Test route to display a specific image from the static/images directory."""
+    image_dir = "static/images"
+    if not os.path.exists(image_dir):
+        return f"Image directory {image_dir} does not exist", 404
+    
+    images = os.listdir(image_dir)
+    if not images:
+        return f"No images found in {image_dir}", 404
+    
+    # Get the first image
+    test_image = images[0]
+    img_path = "images/" + test_image
+    img_url = url_for("static", filename=img_path)
+    
+    html = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Image Test</title>
+        <style>
+            body {{ font-family: Arial, sans-serif; margin: 20px; }}
+            .image-container {{ border: 1px solid #ccc; padding: 10px; margin: 20px 0; }}
+        </style>
+    </head>
+    <body>
+        <h1>Image Test</h1>
+        <p>Testing image display from static directory</p>
+        
+        <div class="image-container">
+            <h3>Image Details:</h3>
+            <p>Filename: {test_image}</p>
+            <p>Path: {img_path}</p>
+            <p>URL: {img_url}</p>
+            
+            <h3>Direct Image Tag:</h3>
+            <img src="{img_url}" style="max-width: 300px; border: 1px solid #ccc;">
+            
+            <h3>Alternative Image Tag:</h3>
+            <img src="/static/{img_path}" style="max-width: 300px; border: 1px solid #ccc;">
+        </div>
+        
+        <p><a href="/debug_images">View All Debug Images</a></p>
+    </body>
+    </html>
+    """
+    
+    return html
+
 if __name__ == "__main__":
     app.run(debug=True)
  
